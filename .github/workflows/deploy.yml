@@ -1,0 +1,23 @@
+name: Docker CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: docker build -t monolithic-app .
+
+      - name: Test Docker Image
+        run: docker images
+
+      - name: Run Docker Container
+        run: docker run -d -p 5000:5000 monolithic-app
