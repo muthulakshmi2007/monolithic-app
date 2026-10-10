@@ -1,3 +1,4 @@
+
 name: Docker CI/CD
 
 on:
@@ -6,18 +7,54 @@ on:
       - main
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Build Docker Image
-        run: docker build -t monolithic-app .
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
 
-      - name: Test Docker Image
-        run: docker images
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ap-south-1 |
+            docker login --username AWS --password-stdin \
+            987040391036.dkr.ecr.ap-south-1.amazonaws.com
 
-      - name: Run Docker Container
-        run: docker run -d -p 5000:5000 monolithic-app
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE=987040391036.dkr.ecr.ap-south-1.amazonaws.com/monolithic-app:${GITHUB_SHA}
+          docker build -t $IMAGE .
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Download ECS Task Definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition monolithic-task:4 \
+            --region us-east-1 \
+            --query taskDefinition \
+            --output json > task-raw.json
+          jq 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy,.deregisteredAt)' task-raw.json > task-definition.json
+
+      - name: Update Container Image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: monolithic-container
+          image: ${{ env.IMAGE }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          cluster: monolithic-cluster
+          service: monolithic-service
+          wait-for-service-stability: true
